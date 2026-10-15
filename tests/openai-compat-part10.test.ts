@@ -1359,6 +1359,54 @@ Deno.test("openai: DeepSeek official Responses adapter serves the Codex wire pro
       assert.equal(response.status, 400);
       assert.equal(((await response.json()) as { error?: { param?: string } }).error?.param, "text.format.type");
     });
+
+    await t.step("forwards sampling controls when thinking is disabled and warns when thinking mode ignores them", async () => {
+      const upstreamBodies: Record<string, unknown>[] = [];
+      const forwardedResponse = await withFetchMock(
+        (_url, bodyText) => {
+          upstreamBodies.push(JSON.parse(String(bodyText)) as Record<string, unknown>);
+          return Response.json(chatCompletion({ role: "assistant", content: "deterministic" }));
+        },
+        () =>
+          handleResponses(
+            responsesBody({
+              model: DEEPSEEK_FLASH_MODEL,
+              input: "hi",
+              reasoning: { effort: "none" },
+              temperature: 0,
+              top_p: 0.9,
+            })
+          )
+      );
+      assert.equal(forwardedResponse.status, 200);
+      assert.equal(forwardedResponse.headers.get("x-uos-warning"), null);
+      assert.equal(upstreamBodies[0]?.temperature, 0);
+      assert.equal(upstreamBodies[0]?.top_p, 0.9);
+      const forwardedPayload = (await forwardedResponse.json()) as Record<string, unknown>;
+      assert.equal(forwardedPayload.temperature, 0);
+      assert.equal(forwardedPayload.top_p, 0.9);
+
+      const warnedResponse = await withFetchMock(
+        (_url, bodyText) => {
+          upstreamBodies.push(JSON.parse(String(bodyText)) as Record<string, unknown>);
+          return Response.json(chatCompletion({ role: "assistant", content: "thinking", reasoning_content: "step" }));
+        },
+        () =>
+          handleResponses(
+            responsesBody({
+              model: DEEPSEEK_FLASH_MODEL,
+              input: "hi",
+              reasoning: { effort: "high" },
+              temperature: 0,
+              top_p: 0.9,
+            })
+          )
+      );
+      assert.equal(warnedResponse.status, 200);
+      assert.equal(warnedResponse.headers.get("x-uos-warning"), "temperature_ignored, top_p_ignored");
+      assert.equal("temperature" in (upstreamBodies[1] ?? {}), false);
+      assert.equal("top_p" in (upstreamBodies[1] ?? {}), false);
+    });
   } finally {
     if (originalApiKey === undefined) Deno.env.delete(envKey);
     else Deno.env.set(envKey, originalApiKey);

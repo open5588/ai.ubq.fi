@@ -98,6 +98,8 @@ export type DeepSeekResponsesEcho = Readonly<{
   tool_choice: unknown;
   parallel_tool_calls: unknown;
   instructions: string | null;
+  temperature?: number | null;
+  top_p?: number | null;
 }>;
 
 /** Fields Codex reads back off a Responses object; the request is echoed verbatim. */
@@ -121,8 +123,8 @@ export const responsesEnvelope = (
   parallel_tool_calls: typeof echo.parallel_tool_calls === "boolean" ? echo.parallel_tool_calls : true,
   tool_choice: echo.tool_choice ?? "auto",
   tools: Array.isArray(echo.tools) ? echo.tools : [],
-  temperature: null,
-  top_p: null,
+  temperature: typeof echo.temperature === "number" ? echo.temperature : null,
+  top_p: typeof echo.top_p === "number" ? echo.top_p : null,
   max_output_tokens: null,
   previous_response_id: null,
   reasoning: null,

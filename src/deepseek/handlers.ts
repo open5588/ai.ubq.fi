@@ -44,7 +44,7 @@ import {
 } from "../openai-telemetry.ts";
 import { EMPTY_UPSTREAM_COMPLETION_MESSAGE } from "../chat/stream-translation.ts";
 import { deepSeekChatBodyDiagnostic, toDeepSeekErrorResponse, toDeepSeekUpstreamErrorResponse } from "../upstream-wire.ts";
-import { parseChatStreamOptions, parseMaxCompletionTokensField, parseReasoningEffortField } from "../request-policy.ts";
+import { parseChatStreamOptions, parseMaxCompletionTokensField, parseReasoningEffortField, withUosWarning } from "../request-policy.ts";
 
 export const recordDeepSeekResponseHealth = (status: number, providerRequestId: string | null): void => {
   if (status === 401 || status === 403) {
@@ -639,6 +639,17 @@ const finalizeBufferedDeepSeekResponses = async (
  * separate, evidence-driven evaluation against representative histories, not
  * an assumed cure.
  */
+const deepSeekResponsesIgnoredSamplingWarnings = (rawRecord: Record<string, unknown>, chatBody: Record<string, unknown>): string[] => {
+  const warnings: string[] = [];
+  if (rawRecord.temperature !== undefined && rawRecord.temperature !== null && chatBody.temperature === undefined) {
+    warnings.push("temperature_ignored");
+  }
+  if (rawRecord.top_p !== undefined && rawRecord.top_p !== null && chatBody.top_p === undefined) {
+    warnings.push("top_p_ignored");
+  }
+  return warnings;
+};
+
 export const handleDeepSeekResponses = async (
   req: Request,
   rawRecord: Record<string, unknown>,
@@ -655,11 +666,14 @@ export const handleDeepSeekResponses = async (
   const { body: chatBody, toolNames, customToolNames } = translated.value;
   if (translated.value.elisions.length) logForwardedPayloadElisions(translated.value.elisions);
 
+  const warnings = deepSeekResponsesIgnoredSamplingWarnings(rawRecord, chatBody);
   const echo: DeepSeekResponsesEcho = {
     tools: rawRecord.tools,
     tool_choice: rawRecord.tool_choice,
     parallel_tool_calls: rawRecord.parallel_tool_calls,
     instructions: typeof rawRecord.instructions === "string" && rawRecord.instructions.trim() ? rawRecord.instructions : null,
+    ...(typeof chatBody.temperature === "number" ? { temperature: chatBody.temperature } : {}),
+    ...(typeof chatBody.top_p === "number" ? { top_p: chatBody.top_p } : {}),
   };
   const reasoningLabel = typeof chatBody.reasoning_effort === "string" ? chatBody.reasoning_effort : DEEPSEEK_DEFAULT_REASONING_EFFORT;
   // The client's cap when it sent one, else the provider's own measured default
@@ -688,35 +702,41 @@ export const handleDeepSeekResponses = async (
   const createdAtSeconds = Math.floor(Date.now() / 1000);
 
   if (clientWantsStream) {
-    return streamDeepSeekResponses(
-      upstream,
-      modelRaw,
-      responseId,
-      createdAtSeconds,
-      echo,
-      toolNames,
-      customToolNames,
-      providerRequestId,
-      usageContext,
-      downstreamSignal,
-      requestSignal,
-      upstreamModel
+    return withUosWarning(
+      streamDeepSeekResponses(
+        upstream,
+        modelRaw,
+        responseId,
+        createdAtSeconds,
+        echo,
+        toolNames,
+        customToolNames,
+        providerRequestId,
+        usageContext,
+        downstreamSignal,
+        requestSignal,
+        upstreamModel
+      ),
+      warnings
     );
   }
 
-  return finalizeBufferedDeepSeekResponses({
-    upstream,
-    modelRaw,
-    responseId,
-    echo,
-    toolNames,
-    customToolNames,
-    upstreamModel,
-    providerRequestId,
-    requestSignal,
-    downstreamSignal,
-    usageContext,
-  });
+  return withUosWarning(
+    await finalizeBufferedDeepSeekResponses({
+      upstream,
+      modelRaw,
+      responseId,
+      echo,
+      toolNames,
+      customToolNames,
+      upstreamModel,
+      providerRequestId,
+      requestSignal,
+      downstreamSignal,
+      usageContext,
+    }),
+    warnings
+  );
 };
 
 /**

@@ -1451,3 +1451,24 @@ Deno.test("deepseek responses: malformed function_call and unknown item types st
   assert.equal(unknownItem.param, "input.type");
   assert.equal(unknownItem.message, "input item type 'computer_call' is not supported");
 });
+
+Deno.test("deepseek responses: forwards temperature and top_p when thinking mode is disabled", () => {
+  const nonThinking = toDeepSeekResponsesChatBody({ input: "hi", reasoning: { effort: "none" }, temperature: 0, top_p: 0.85 }, "deepseek-flash", false);
+  assert.equal(nonThinking.ok, true);
+  assert.equal(nonThinking.value.body.reasoning_effort, "none");
+  assert.equal(nonThinking.value.body.temperature, 0);
+  assert.equal(nonThinking.value.body.top_p, 0.85);
+
+  const thinkingActive = toDeepSeekResponsesChatBody({ input: "hi", reasoning: { effort: "high" }, temperature: 0, top_p: 0.85 }, "deepseek-flash", false);
+  assert.equal(thinkingActive.ok, true);
+  assert.equal("temperature" in thinkingActive.value.body, false);
+  assert.equal("top_p" in thinkingActive.value.body, false);
+
+  const invalidTemp = toDeepSeekResponsesChatBody({ input: "hi", reasoning: { effort: "none" }, temperature: 3 }, "deepseek-flash", false);
+  assert.equal(invalidTemp.ok, false);
+  assert.equal(invalidTemp.param, "temperature");
+
+  const invalidTopP = toDeepSeekResponsesChatBody({ input: "hi", reasoning: { effort: "none" }, top_p: -0.1 }, "deepseek-flash", false);
+  assert.equal(invalidTopP.ok, false);
+  assert.equal(invalidTopP.param, "top_p");
+});

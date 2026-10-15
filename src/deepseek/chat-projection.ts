@@ -10,6 +10,7 @@ import {
   originalToolName,
 } from "./responses.ts";
 import { FORWARDED_PAYLOAD_POLICY, type ForwardedPayloadElision, type ForwardedPayloadReduction } from "./forwarded-payload-policy.ts";
+import { deepSeekThinkingModeActive } from "./index.ts";
 import { getString, isRecord } from "../utils.ts";
 
 type ChatContentPart = Record<string, unknown>;
@@ -697,6 +698,32 @@ const applyReasoning = (
   return { ok: true, value: undefined };
 };
 
+const samplingNumber = (value: unknown, min: number, max: number): number | null =>
+  typeof value === "number" && Number.isFinite(value) && value >= min && value <= max ? value : null;
+
+const applySampling = (body: Record<string, unknown>, rawRecord: Record<string, unknown>, profile: ChatOnlyResponsesProfile): DeepSeekResponsesResult<void> => {
+  const rawTemperature = rawRecord.temperature;
+  let temperature: number | undefined;
+  if (rawTemperature !== undefined && rawTemperature !== null) {
+    const parsed = samplingNumber(rawTemperature, 0, 2);
+    if (parsed === null) return failure("temperature", "temperature must be a number between 0 and 2");
+    temperature = parsed;
+  }
+  const rawTopP = rawRecord.top_p;
+  let topP: number | undefined;
+  if (rawTopP !== undefined && rawTopP !== null) {
+    const parsed = samplingNumber(rawTopP, 0, 1);
+    if (parsed === null) return failure("top_p", "top_p must be a number between 0 and 1");
+    topP = parsed;
+  }
+  if (profile.id === "deepseek" && deepSeekThinkingModeActive(body.reasoning_effort, rawRecord.thinking)) {
+    return { ok: true, value: undefined };
+  }
+  if (temperature !== undefined) body.temperature = temperature;
+  if (topP !== undefined) body.top_p = topP;
+  return { ok: true, value: undefined };
+};
+
 const applyTools = (
   body: Record<string, unknown>,
   rawRecord: Record<string, unknown>,
@@ -836,6 +863,8 @@ export const toDeepSeekResponsesChatBody = (
   if (!outputLimit.ok) return outputLimit;
   const reasoning = applyReasoning(body, rawRecord, profile);
   if (!reasoning.ok) return reasoning;
+  const sampling = applySampling(body, rawRecord, profile);
+  if (!sampling.ok) return sampling;
   const toolNames = applyTools(body, rawRecord, profile);
   if (!toolNames.ok) return toolNames;
   // Only a tool-bearing request makes the provider require replayed reasoning.
