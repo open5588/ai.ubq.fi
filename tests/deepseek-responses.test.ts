@@ -33,6 +33,7 @@ Deno.test("deepseek responses: maps Responses input onto Chat messages", () => {
       { type: "message", role: "user", content: [{ type: "input_text", text: "hello" }] },
       { type: "message", role: "assistant", content: [{ type: "output_text", text: "hi" }] },
       { type: "message", role: "developer", content: [{ type: "input_text", text: "be terse" }] },
+      { type: "message", role: "system", content: [{ type: "input_text", text: "obey policy" }] },
       { type: "reasoning", summary: [] },
       { type: "function_call", name: "get_date", arguments: "{}", call_id: "call_1" },
       { type: "function_call", name: "get_weather", arguments: '{"city":"x"}', call_id: "call_2" },
@@ -48,6 +49,7 @@ Deno.test("deepseek responses: maps Responses input onto Chat messages", () => {
     { role: "assistant", content: "hi" },
     // DeepSeek, like OpenAI Chat, has no developer role.
     { role: "system", content: "be terse" },
+    { role: "system", content: "obey policy" },
     // Consecutive calls collapse into one assistant turn.
     {
       role: "assistant",
@@ -62,8 +64,26 @@ Deno.test("deepseek responses: maps Responses input onto Chat messages", () => {
   ]);
 });
 
+Deno.test("deepseek responses: accepts system-role input message items in chat body projection", () => {
+  const projected = toDeepSeekResponsesChatBody(
+    {
+      input: [
+        { type: "message", role: "system", content: "Follow system instructions." },
+        { type: "message", role: "user", content: [{ type: "input_text", text: "Hello" }] },
+      ],
+    },
+    "deepseek-flash",
+    false
+  );
+  assert.equal(projected.ok, true);
+  assert.deepEqual(projected.value.body.messages, [
+    { role: "system", content: "Follow system instructions." },
+    { role: "user", content: "Hello" },
+  ]);
+});
+
 Deno.test("deepseek responses: rejects input shapes it cannot translate", () => {
-  const badRole = toDeepSeekChatMessages([{ type: "message", role: "system", content: "x" }], null);
+  const badRole = toDeepSeekChatMessages([{ type: "message", role: "tool", content: "x" }], null);
   assert.equal(badRole.ok, false);
   const badType = toDeepSeekChatMessages([{ type: "computer_call", call_id: "c" }], null);
   assert.equal(badType.ok, false);
